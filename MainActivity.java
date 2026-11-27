@@ -3,7 +3,9 @@ package com.koc.hatirlatici;
 import android.Manifest;
 import android.app.Activity;
 import android.app.DatePickerDialog;
+import android.app.KeyguardManager;
 import android.app.TimePickerDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -34,6 +36,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.VideoView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -43,13 +46,14 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.UUID;
 import java.util.function.IntConsumer;
 
 public class MainActivity extends Activity {
 
     static final int BG = 0xFF0F172A, CARD = 0xFF1E293B, LINE = 0xFF334155,
-            TXT = 0xFFF1F5F9, MUT = 0xFF94A3B8, ACC = 0xFF818CF8;
+            TXT = 0xFFF1F5F9, MUT = 0xFF94A3B8, ACC = 0xFF818CF8, FIELD = 0xFF0B1220;
 
     // {Türkçe gösterim, konuşma/ses kodu, İngilizce ad}
     static final String[][] LANGS = {
@@ -67,13 +71,17 @@ public class MainActivity extends Activity {
     };
     static final String[] LVLS = {"A1 (yeni başlayan)", "A2 (temel)", "B1 (orta)", "B2 (orta üstü)", "C1 (ileri)"};
     static final String[] TITLES = {"Görevler", "Kariyer koçu", "Yabancı dil", "Ayarlar"};
+    static final String[] NAV = {"Görevler", "Koç", "Dil", "Ayarlar"};
+    static final String[] DAYS = {"Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"};
 
     final SimpleDateFormat DF = new SimpleDateFormat("d MMM yyyy HH:mm", new Locale("tr", "TR"));
 
-    FrameLayout frame, body;
+    FrameLayout frame, body, overlay;
+    VideoView overlayVideo;
     ScrollView curScroll;
     Button[] navBtns = new Button[4];
-    ImageView overlay;
+    int tab = 0;
+    boolean fromAlert = false;
 
     ArrayList<String[]> coachLog = new ArrayList<>();
     ArrayList<String[]> langLog = new ArrayList<>();
@@ -118,8 +126,14 @@ public class MainActivity extends Activity {
         for (int i = 0; i < 4; i++) {
             final int idx = i;
             Button nb = new Button(this);
-            nb.setText(TITLES[i]);
+            nb.setText(NAV[i]);
             nb.setAllCaps(false);
+            nb.setTextSize(13);
+            nb.setSingleLine(true);
+            nb.setIncludeFontPadding(false);
+            nb.setMinHeight(0);
+            nb.setMinimumHeight(0);
+            nb.setPadding(0, dp(14), 0, dp(14));
             nb.setBackgroundColor(Color.TRANSPARENT);
             nb.setOnClickListener(view -> switchTab(idx));
             navBtns[i] = nb;
@@ -150,20 +164,21 @@ public class MainActivity extends Activity {
         if (i != null && i.hasExtra("text")) {
             String cat = i.getStringExtra("cat");
             String text = i.getStringExtra("text");
+            String author = i.getStringExtra("author");
+            String uri = i.getStringExtra("uri");
             long seed = i.getLongExtra("seed", System.nanoTime());
+            boolean anim = i.getBooleanExtra("anim", false);
             i.removeExtra("text");
-            showQuote(cat == null || cat.isEmpty() ? 'd' : cat.charAt(0), text, seed);
+            fromAlert = true;
+            showQuote(cat == null || cat.isEmpty() ? 'd' : cat.charAt(0), text,
+                    author == null ? "" : author, seed, anim, uri == null ? "" : uri);
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (overlay != null) {
-            frame.removeView(overlay);
-            overlay = null;
-        } else {
-            super.onBackPressed();
-        }
+        if (overlay != null) closeOverlay();
+        else super.onBackPressed();
     }
 
     @Override
@@ -182,19 +197,116 @@ public class MainActivity extends Activity {
         if (code == 2 && res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED) listen();
     }
 
-    void showQuote(char cat, String text, long seed) {
-        if (overlay != null) frame.removeView(overlay);
-        int w = getResources().getDisplayMetrics().widthPixels / 2;
-        int h = getResources().getDisplayMetrics().heightPixels / 2;
-        Bitmap bm = Wallpaper.make(cat, w, h, text, seed);
-        overlay = new ImageView(this);
-        overlay.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        overlay.setImageBitmap(bm);
-        overlay.setOnClickListener(view -> {
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == 10 && res == RESULT_OK && data != null) {
+            List<Uri> us = new ArrayList<>();
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                    us.add(data.getClipData().getItemAt(i).getUri());
+                }
+            } else if (data.getData() != null) {
+                us.add(data.getData());
+            }
+            for (Uri u : us) {
+                try {
+                    getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Exception e) {
+                    // kalıcı izin verilemedi
+                }
+                UserMedia.add(this, u.toString());
+            }
+            toast(us.size() + " dosya eklendi.");
+            if (tab == 3) switchTab(3);
+        }
+    }
+
+    // ---------------------------------------------------------------- tam ekran söz
+
+    void closeOverlay() {
+        if (overlay == null) return;
+        if (overlayVideo != null) {
+            try {
+                overlayVideo.stopPlayback();
+            } catch (Exception e) {
+                // yoksay
+            }
+            overlayVideo = null;
+        }
+        frame.removeView(overlay);
+        overlay = null;
+        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        if (fromAlert && km != null && km.isKeyguardLocked()) finish();
+        fromAlert = false;
+    }
+
+    void showQuote(char cat, String text, String author, long seed, boolean anim, String uri) {
+        if (overlay != null) {
             frame.removeView(overlay);
             overlay = null;
-        });
-        frame.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        }
+        final int sw = getResources().getDisplayMetrics().widthPixels;
+        final int sh = getResources().getDisplayMetrics().heightPixels;
+        FrameLayout o = new FrameLayout(this);
+        o.setBackgroundColor(Color.BLACK);
+
+        boolean own = uri != null && !uri.isEmpty();
+        boolean video = own && UserMedia.isVideo(this, uri);
+
+        if (own && video && anim) {
+            final VideoView vv = new VideoView(this);
+            vv.setVideoURI(Uri.parse(uri));
+            vv.setOnPreparedListener(mp -> {
+                mp.setLooping(true);
+                mp.setVolume(0f, 0f);
+                int vw = mp.getVideoWidth();
+                int vh = mp.getVideoHeight();
+                if (vw > 0 && vh > 0) {
+                    float fit = Math.min((float) sw / vw, (float) sh / vh);
+                    float cover = Math.max((float) sw / vw, (float) sh / vh);
+                    vv.setScaleX(cover / fit);
+                    vv.setScaleY(cover / fit);
+                }
+                mp.start();
+            });
+            vv.setOnErrorListener((mp, what, extra) -> true);
+            o.addView(vv, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+            overlayVideo = vv;
+        } else {
+            Bitmap bm = null;
+            if (own) bm = UserMedia.bitmap(this, uri, sw / 2, sh / 2);
+            if (bm == null) {
+                if (anim) {
+                    o.addView(new AnimatedBackground(this, cat, seed), new FrameLayout.LayoutParams(-1, -1));
+                } else {
+                    bm = Wallpaper.background(cat, sw / 2, sh / 2, seed);
+                }
+            }
+            if (bm != null) {
+                ImageView iv = new ImageView(this);
+                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                iv.setImageBitmap(bm);
+                o.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+                if (anim) iv.animate().scaleX(1.15f).scaleY(1.15f).setDuration(14000).start();
+            }
+        }
+
+        QuoteView qv = new QuoteView(this, text, author);
+        qv.setAlpha(0f);
+        qv.setTranslationY(dp(28));
+        o.addView(qv, new FrameLayout.LayoutParams(-1, -1));
+        qv.animate().alpha(1f).translationY(0f).setStartDelay(250).setDuration(900).start();
+
+        TextView hint = tv("Kapatmak için dokun", 12, false, 0x99FFFFFF);
+        hint.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        hp.bottomMargin = dp(28);
+        o.addView(hint, hp);
+
+        o.setOnClickListener(view -> closeOverlay());
+        overlay = o;
+        frame.addView(o, new FrameLayout.LayoutParams(-1, -1));
     }
 
     // ---------------------------------------------------------------- yardımcılar
@@ -228,6 +340,8 @@ public class MainActivity extends Activity {
         t.setText(s);
         t.setTextSize(sp);
         t.setTextColor(color);
+        t.setIncludeFontPadding(false);
+        t.setLineSpacing(0f, 1.15f);
         if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
         return t;
     }
@@ -237,8 +351,17 @@ public class MainActivity extends Activity {
         e.setHint(hint);
         e.setHintTextColor(0xFF64748B);
         e.setTextColor(TXT);
-        e.setBackground(round(0xFF0B1220, 12, LINE));
-        e.setPadding(dp(12), dp(10), dp(12), dp(10));
+        e.setTextSize(15);
+        e.setBackground(round(FIELD, 12, LINE));
+        e.setPadding(dp(12), dp(12), dp(12), dp(12));
+        e.setHighlightColor(0x66818CF8);
+        // Görünür imleç (parlak çizgi)
+        if (Build.VERSION.SDK_INT >= 29) {
+            GradientDrawable cur = new GradientDrawable();
+            cur.setColor(0xFFFFFFFF);
+            cur.setSize(dp(2), dp(22));
+            e.setTextCursorDrawable(cur);
+        }
         return e;
     }
 
@@ -246,6 +369,10 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(s);
         b.setAllCaps(false);
+        b.setTextSize(14);
+        b.setIncludeFontPadding(false);
+        b.setMinHeight(dp(46));
+        b.setMinimumHeight(dp(46));
         b.setTextColor(primary ? 0xFF0B1020 : TXT);
         b.setBackground(round(primary ? ACC : 0x00000000, 12, primary ? 0 : LINE));
         if (l != null) b.setOnClickListener(l);
@@ -267,14 +394,58 @@ public class MainActivity extends Activity {
 
     void add(LinearLayout parent, View v) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = dp(8);
+        lp.topMargin = dp(10);
         parent.addView(v, lp);
+    }
+
+    void label(LinearLayout parent, String s) {
+        TextView t = tv(s, 13, false, MUT);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(14);
+        parent.addView(t, lp);
+    }
+
+    LinearLayout row(View a, View b) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, -2, 1f);
+        l1.rightMargin = dp(4);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, -2, 1f);
+        l2.leftMargin = dp(4);
+        r.addView(a, l1);
+        r.addView(b, l2);
+        return r;
     }
 
     Spinner spin(String[] items, int sel) {
         Spinner s = new Spinner(this);
-        s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, items));
+        ArrayAdapter<String> ad = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
+            @Override
+            public View getView(int p, View cv, ViewGroup par) {
+                TextView t = (TextView) super.getView(p, cv, par);
+                t.setText(getItem(p) + "  ▾");
+                t.setTextColor(TXT);
+                t.setTextSize(15);
+                t.setSingleLine(true);
+                t.setPadding(dp(12), dp(12), dp(12), dp(12));
+                return t;
+            }
+
+            @Override
+            public View getDropDownView(int p, View cv, ViewGroup par) {
+                TextView t = (TextView) super.getDropDownView(p, cv, par);
+                t.setText(getItem(p));
+                t.setTextColor(TXT);
+                t.setTextSize(15);
+                t.setBackgroundColor(CARD);
+                t.setPadding(dp(16), dp(14), dp(16), dp(14));
+                return t;
+            }
+        };
+        s.setAdapter(ad);
         s.setSelection(sel);
+        s.setBackground(round(FIELD, 12, LINE));
+        s.setPopupBackgroundDrawable(round(CARD, 12, LINE));
         return s;
     }
 
@@ -297,8 +468,8 @@ public class MainActivity extends Activity {
         t.setTextColor(TXT);
         t.setTextSize(15);
         t.setTextIsSelectable(true);
-        t.setPadding(dp(12), dp(8), dp(12), dp(8));
-        t.setBackground(round(user ? 0xFF312E81 : 0xFF0B1220, 12, user ? 0 : LINE));
+        t.setPadding(dp(12), dp(10), dp(12), dp(10));
+        t.setBackground(round(user ? 0xFF312E81 : FIELD, 12, user ? 0 : LINE));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
         lp.topMargin = dp(8);
         lp.gravity = user ? Gravity.END : Gravity.START;
@@ -313,10 +484,11 @@ public class MainActivity extends Activity {
     }
 
     void switchTab(int t) {
+        tab = t;
         body.removeAllViews();
         LinearLayout c = col();
-        c.setPadding(dp(16), dp(12), dp(16), dp(24));
-        c.addView(tv(TITLES[t], 22, true, TXT));
+        c.setPadding(dp(16), dp(14), dp(16), dp(28));
+        c.addView(tv(TITLES[t], 24, true, TXT));
         ScrollView sv = new ScrollView(this);
         sv.addView(c);
         body.addView(sv, new FrameLayout.LayoutParams(-1, -1));
@@ -334,6 +506,11 @@ public class MainActivity extends Activity {
         return (ms / 60000L) + " dk";
     }
 
+    void dayStyle(TextView d, boolean on) {
+        d.setTextColor(on ? 0xFF0B1020 : MUT);
+        d.setBackground(round(on ? ACC : FIELD, 10, on ? 0 : LINE));
+    }
+
     // ---------------------------------------------------------------- GÖREVLER
 
     void buildTasks(LinearLayout c) {
@@ -344,10 +521,15 @@ public class MainActivity extends Activity {
         final EditText title = et("Görev (örn: Her gün 1 saat kod yaz)");
         add(form, title);
 
+        label(form, "Alan (seçince önerilen aralık otomatik gelir)");
+        final Spinner area = spin(Areas.NAMES, 0);
+        add(form, area);
+
+        label(form, "Bitiş tarihi");
         final Calendar dl = Calendar.getInstance();
         dl.add(Calendar.DAY_OF_YEAR, 7);
         dl.set(Calendar.SECOND, 0);
-        final Button dBtn = btn("Bitiş: " + DF.format(dl.getTime()), false, null);
+        final Button dBtn = btn(DF.format(dl.getTime()), false, null);
         dBtn.setOnClickListener(view -> {
             new DatePickerDialog(this, (dpk, yy, mm, dd) -> {
                 dl.set(yy, mm, dd);
@@ -355,32 +537,66 @@ public class MainActivity extends Activity {
                     dl.set(Calendar.HOUR_OF_DAY, hh);
                     dl.set(Calendar.MINUTE, mi);
                     dl.set(Calendar.SECOND, 0);
-                    dBtn.setText("Bitiş: " + DF.format(dl.getTime()));
+                    dBtn.setText(DF.format(dl.getTime()));
                 }, dl.get(Calendar.HOUR_OF_DAY), dl.get(Calendar.MINUTE), true).show();
             }, dl.get(Calendar.YEAR), dl.get(Calendar.MONTH), dl.get(Calendar.DAY_OF_MONTH)).show();
         });
         add(form, dBtn);
 
-        form.addView(tv("Her ... uyar", 13, false, MUT));
-        LinearLayout row = new LinearLayout(this);
+        label(form, "Kaç aralıkla uyarsın?");
         final EditText every = et("3");
         every.setInputType(InputType.TYPE_CLASS_NUMBER);
         every.setText("3");
-        final Spinner unit = spin(new String[]{"dakika", "saat", "gün"}, 1);
-        row.addView(every, new LinearLayout.LayoutParams(0, -2, 1f));
-        row.addView(unit, new LinearLayout.LayoutParams(0, -2, 1f));
-        add(form, row);
+        final Spinner unit = spin(new String[]{"dakikada bir", "saatte bir", "günde bir"}, 1);
+        add(form, row(every, unit));
 
-        form.addView(tv("Uyarı sesi ve titreşim", 13, false, MUT));
+        label(form, "Hangi saatler arasında uyarsın? (bu saatlerin dışında susar)");
+        String[] startItems = new String[24];
+        String[] endItems = new String[24];
+        for (int i = 0; i < 24; i++) {
+            startItems[i] = String.format("%02d:00", i);
+            endItems[i] = String.format("%02d:00", i + 1);
+        }
+        final Spinner startSp = spin(startItems, 8);
+        final Spinner endSp = spin(endItems, 22);
+        add(form, row(startSp, endSp));
+
+        label(form, "Hangi günler?");
+        final boolean[] dayOn = {true, true, true, true, true, true, true};
+        LinearLayout days = new LinearLayout(this);
+        for (int i = 0; i < 7; i++) {
+            final int di = i;
+            final TextView d = new TextView(this);
+            d.setText(DAYS[i]);
+            d.setTextSize(12);
+            d.setGravity(Gravity.CENTER);
+            d.setIncludeFontPadding(false);
+            d.setPadding(0, dp(12), 0, dp(12));
+            dayStyle(d, true);
+            d.setOnClickListener(view -> {
+                dayOn[di] = !dayOn[di];
+                dayStyle(d, dayOn[di]);
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+            lp.leftMargin = dp(2);
+            lp.rightMargin = dp(2);
+            days.addView(d, lp);
+        }
+        add(form, days);
+
+        label(form, "Uyarı sesi ve titreşim");
         final Spinner snd = spin(Sounds.NAMES, 0);
         final Spinner vib = spin(Sounds.VIB_NAMES, 2);
-        LinearLayout row2 = new LinearLayout(this);
-        row2.addView(snd, new LinearLayout.LayoutParams(0, -2, 1f));
-        row2.addView(vib, new LinearLayout.LayoutParams(0, -2, 1f));
-        add(form, row2);
+        add(form, row(snd, vib));
 
-        LinearLayout row3 = new LinearLayout(this);
-        Button test = btn("Dene", false, view ->
+        onSelect(area, pos -> {
+            every.setText(String.valueOf(Areas.EVERY[pos]));
+            unit.setSelection(Areas.UNIT[pos]);
+            startSp.setSelection(Areas.START[pos]);
+            endSp.setSelection(Areas.END[pos] - 1);
+        });
+
+        Button test = btn("Sesi dene", false, view ->
                 Sounds.preview(this, snd.getSelectedItemPosition(), vib.getSelectedItemPosition()));
         Button addB = btn("Görevi ekle", true, view -> {
             String ttl = title.getText().toString().trim();
@@ -399,14 +615,31 @@ public class MainActivity extends Activity {
                 toast("Uyarı aralığı en az 1 olmalı.");
                 return;
             }
+            int sh = startSp.getSelectedItemPosition();
+            int eh = endSp.getSelectedItemPosition() + 1;
+            if (eh <= sh) {
+                toast("Bitiş saati, başlangıç saatinden büyük olmalı.");
+                return;
+            }
+            int mask = 0;
+            for (int i = 0; i < 7; i++) if (dayOn[i]) mask |= (1 << i);
+            if (mask == 0) {
+                toast("En az bir gün seç.");
+                return;
+            }
             long[] mult = {60000L, 3600000L, 86400000L};
             Task t = new Task();
             t.id = UUID.randomUUID().toString();
             t.title = ttl;
+            t.area = area.getSelectedItemPosition();
             t.deadline = deadline;
             t.everyMs = n * mult[unit.getSelectedItemPosition()];
             t.created = now;
-            t.next = now + t.everyMs;
+            t.startHour = sh;
+            t.endHour = eh;
+            t.days = mask;
+            t.next = t.adjust(now + t.everyMs);
+            if (t.next > t.deadline) t.next = t.deadline;
             t.sound = snd.getSelectedItemPosition();
             t.vib = vib.getSelectedItemPosition();
             t.active = true;
@@ -416,11 +649,9 @@ public class MainActivity extends Activity {
             Scheduler.schedule(this, t);
             title.setText("");
             fillTasks();
-            toast("Görev eklendi. Uygulama kapalıyken de uyarır.");
+            toast("Görev eklendi. İlk uyarı: " + DF.format(new java.util.Date(t.next)));
         });
-        row3.addView(test, new LinearLayout.LayoutParams(0, -2, 1f));
-        row3.addView(addB, new LinearLayout.LayoutParams(0, -2, 2f));
-        add(form, row3);
+        add(form, row(test, addB));
 
         taskList = col();
         add(c, taskList);
@@ -440,9 +671,19 @@ public class MainActivity extends Activity {
             final String tid = t.id;
             LinearLayout cd = card();
             cd.addView(tv(t.title, 17, true, TXT));
-            cd.addView(tv("Her " + fmtEvery(t.everyMs) + " • " + Sounds.NAMES[t.sound]
-                    + " • titreşim: " + Sounds.VIB_NAMES[t.vib], 13, false, MUT));
-            cd.addView(tv("Bitiş: " + DF.format(new java.util.Date(t.deadline)), 13, false, MUT));
+            String areaName = t.area >= 0 && t.area < Areas.NAMES.length ? Areas.NAMES[t.area] : "Genel";
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = dp(6);
+            cd.addView(tv(areaName + " • her " + fmtEvery(t.everyMs), 13, false, ACC), lp);
+            LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(-1, -2);
+            lp2.topMargin = dp(4);
+            cd.addView(tv(t.windowText() + " • " + t.daysText(), 13, false, MUT), lp2);
+            LinearLayout.LayoutParams lp3 = new LinearLayout.LayoutParams(-1, -2);
+            lp3.topMargin = dp(4);
+            cd.addView(tv(Sounds.NAMES[t.sound] + " • titreşim: " + Sounds.VIB_NAMES[t.vib], 13, false, MUT), lp3);
+            LinearLayout.LayoutParams lp4 = new LinearLayout.LayoutParams(-1, -2);
+            lp4.topMargin = dp(4);
+            cd.addView(tv("Bitiş: " + DF.format(new java.util.Date(t.deadline)), 13, false, MUT), lp4);
             String st;
             if (t.active) {
                 st = "Sonraki uyarı: " + DF.format(new java.util.Date(Math.min(t.next, t.deadline)));
@@ -451,13 +692,12 @@ public class MainActivity extends Activity {
             } else {
                 st = "Duraklatıldı";
             }
-            cd.addView(tv(st, 13, false, ACC));
-            LinearLayout r = new LinearLayout(this);
-            r.addView(btn(t.active ? "Duraklat" : "Başlat", false, view -> toggleTask(tid)),
-                    new LinearLayout.LayoutParams(0, -2, 1f));
-            r.addView(btn("Sil", false, view -> deleteTask(tid)),
-                    new LinearLayout.LayoutParams(0, -2, 1f));
-            add(cd, r);
+            LinearLayout.LayoutParams lp5 = new LinearLayout.LayoutParams(-1, -2);
+            lp5.topMargin = dp(8);
+            cd.addView(tv(st, 14, true, TXT), lp5);
+            Button b1 = btn(t.active ? "Duraklat" : "Başlat", false, view -> toggleTask(tid));
+            Button b2 = btn("Sil", false, view -> deleteTask(tid));
+            add(cd, row(b1, b2));
             add(taskList, cd);
         }
     }
@@ -474,7 +714,8 @@ public class MainActivity extends Activity {
                 toast("Bitiş tarihi geçmiş. Yeni görev ekle.");
             } else {
                 x.active = true;
-                x.next = now + x.everyMs;
+                x.next = x.adjust(now + x.everyMs);
+                if (x.next > x.deadline) x.next = x.deadline;
                 Scheduler.schedule(this, x);
             }
         }
@@ -617,7 +858,7 @@ public class MainActivity extends Activity {
         LinearLayout w = card();
         add(c, w);
         w.addView(tv("Haftalık değerlendirme", 18, true, TXT));
-        w.addView(tv("Bu hafta hedefe ne kadar ilerledim? (1-5)", 13, false, MUT));
+        label(w, "Bu hafta hedefe ne kadar ilerledim? (1-5)");
         final Spinner score = spin(new String[]{"1", "2", "3", "4", "5"}, 2);
         add(w, score);
         final EditText did = et("Ne yaptım? Beni ne engelledi?");
@@ -770,12 +1011,14 @@ public class MainActivity extends Activity {
         g.addView(tv("Dil seç; seçtiğin dilde seninle sohbet eder, hatalarını Türkçe düzeltir.", 13, false, MUT));
         String[] names = new String[LANGS.length];
         for (int i = 0; i < LANGS.length; i++) names[i] = LANGS[i][0];
+        label(g, "Dil");
         Spinner ls = spin(names, langIdx);
         onSelect(ls, pos -> {
             langIdx = pos;
             Store.put(this, "langIdx", String.valueOf(pos));
         });
         add(g, ls);
+        label(g, "Seviye");
         Spinner vs = spin(LVLS, lvlIdx);
         onSelect(vs, pos -> {
             lvlIdx = pos;
@@ -807,19 +1050,79 @@ public class MainActivity extends Activity {
         }
         langInput = et("Yaz…");
         add(ch, langInput);
-        LinearLayout r = new LinearLayout(this);
-        r.addView(btn("🎤 Konuş", false, view -> listen()), new LinearLayout.LayoutParams(0, -2, 1f));
-        r.addView(btn("Gönder", true, view -> {
+        Button mic = btn("🎤 Konuş", false, view -> listen());
+        Button send = btn("Gönder", true, view -> {
             String s = langInput.getText().toString();
             langInput.setText("");
             sendLang(s);
-        }), new LinearLayout.LayoutParams(0, -2, 1f));
-        add(ch, r);
+        });
+        add(ch, row(mic, send));
     }
 
     // ---------------------------------------------------------------- AYARLAR
 
     void buildSettings(LinearLayout c) {
+        // --- arka plan / duvar kağıdı
+        LinearLayout wp = card();
+        add(c, wp);
+        wp.addView(tv("Arka plan / duvar kağıdı", 18, true, TXT));
+        wp.addView(tv("Bildirimdeki resim hep sabittir (Android bildirimde animasyona izin vermez). "
+                + "Hareket, bildirime dokununca açılan tam ekranda görünür.", 13, false, MUT));
+
+        label(wp, "Tür");
+        Spinner typeSp = spin(new String[]{"Sabit", "Hareketli", "Karışık (her uyarıda rastgele)"},
+                parse(Store.get(this, "wptype", "2"), 2));
+        onSelect(typeSp, pos -> Store.put(this, "wptype", String.valueOf(pos)));
+        add(wp, typeSp);
+
+        label(wp, "Kaynak");
+        Spinner srcSp = spin(new String[]{"Otomatik (kodla üretilir)", "Kendi resim/videolarım", "İkisi karışık"},
+                parse(Store.get(this, "wpsrc", "0"), 0));
+        onSelect(srcSp, pos -> Store.put(this, "wpsrc", String.valueOf(pos)));
+        add(wp, srcSp);
+
+        final TextView cnt = tv(UserMedia.list(this).size() + " dosya seçili", 13, true, ACC);
+        add(wp, cnt);
+        add(wp, btn("Telefondan resim / video ekle", false, view -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(i, 10);
+        }));
+        add(wp, btn("Seçilenleri temizle", false, view -> {
+            UserMedia.clear(this);
+            cnt.setText("0 dosya seçili");
+        }));
+
+        CheckBox fs = new CheckBox(this);
+        fs.setText("Uyarı gelince tam ekran aç (kilit ekranında da)");
+        fs.setTextColor(TXT);
+        fs.setChecked("1".equals(Store.get(this, "fullscreen", "0")));
+        fs.setOnCheckedChangeListener((bv, on) -> Store.put(this, "fullscreen", on ? "1" : "0"));
+        add(wp, fs);
+        if (Build.VERSION.SDK_INT >= 34) {
+            add(wp, btn("Tam ekran izni (Android 14+)", false, view -> {
+                try {
+                    Intent i = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT);
+                    i.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(i);
+                } catch (Exception e) {
+                    toast("Bu telefonda bu izin ayrıca gerekmiyor.");
+                }
+            }));
+        }
+        add(wp, btn("Önizle", true, view -> {
+            Quotes.Q q = Quotes.next(this);
+            long seed = System.nanoTime();
+            Notifier.Pick pk = Notifier.pick(this, new Random(seed));
+            fromAlert = false;
+            showQuote(q.cat, q.text, q.author, seed, pk.anim, pk.uri);
+        }));
+
+        // --- alarmın güvenle çalışması
         LinearLayout a = card();
         add(c, a);
         a.addView(tv("Alarmın güvenle çalışması için", 18, true, TXT));
@@ -853,6 +1156,7 @@ public class MainActivity extends Activity {
             Notifier.show(this, t, false);
         }));
 
+        // --- kilit ekranı kartı
         LinearLayout l = card();
         add(c, l);
         l.addView(tv("Kilit ekranı kartı", 18, true, TXT));
@@ -868,14 +1172,16 @@ public class MainActivity extends Activity {
         });
         add(l, lc);
 
+        // --- sesler
         LinearLayout s = card();
         add(c, s);
         s.addView(tv("Sesler", 18, true, TXT));
         for (int i = 0; i < Sounds.NAMES.length; i++) {
-            final int k = i;
-            add(s, btn("▶ " + Sounds.NAMES[i], false, view -> Sounds.preview(this, k, 0)));
+            final int si = i;
+            add(s, btn("▶ " + Sounds.NAMES[i], false, view -> Sounds.preview(this, si, 0)));
         }
 
+        // --- API anahtarı
         LinearLayout k = card();
         add(c, k);
         k.addView(tv("Yapay zekâ anahtarı", 18, true, TXT));

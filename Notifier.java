@@ -10,7 +10,47 @@ import android.graphics.Bitmap;
 import android.media.AudioAttributes;
 import android.net.Uri;
 
+import java.util.List;
+import java.util.Random;
+
 public class Notifier {
+
+    /** Bu uyarı için seçilen görünüm: hareketli mi, kendi dosyan mı. */
+    public static class Pick {
+        public boolean anim;
+        public String uri = "";
+    }
+
+    static int num(String s, int d) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (Exception e) {
+            return d;
+        }
+    }
+
+    /** Ayarlardaki Tür (sabit/hareketli/karışık) ve Kaynak (otomatik/kendi dosyam/karışık) seçimini uygular. */
+    public static Pick pick(Context c, Random r) {
+        Pick pk = new Pick();
+        int type = num(Store.get(c, "wptype", "2"), 2);
+        pk.anim = type == 1 || (type == 2 && r.nextBoolean());
+        int src = num(Store.get(c, "wpsrc", "0"), 0);
+        List<String> media = UserMedia.list(c);
+        if (!media.isEmpty() && (src == 1 || (src == 2 && r.nextBoolean()))) {
+            pk.uri = media.get(r.nextInt(media.size()));
+        }
+        return pk;
+    }
+
+    static Bitmap bg(Context c, Quotes.Q q, long seed, Pick pk, int w, int h) {
+        Bitmap b = null;
+        if (!pk.uri.isEmpty()) {
+            b = UserMedia.bitmap(c, pk.uri, w, h);
+            if (b == null) pk.uri = "";
+        }
+        if (b == null) b = Wallpaper.background(q.cat, w, h, seed);
+        return b;
+    }
 
     /** Android'de ses ve titreşim kanala bağlıdır; her ses+titreşim ikilisi için bir kanal açılır. */
     static String channel(Context c, int sound, int vib) {
@@ -38,12 +78,15 @@ public class Notifier {
         return id;
     }
 
-    static PendingIntent openIntent(Context c, int req, Quotes.Q q, long seed) {
+    static PendingIntent openIntent(Context c, int req, Quotes.Q q, long seed, Pick pk) {
         Intent i = new Intent(c, MainActivity.class);
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         i.putExtra("cat", String.valueOf(q.cat));
         i.putExtra("text", q.text);
+        i.putExtra("author", q.author);
         i.putExtra("seed", seed);
+        i.putExtra("anim", pk.anim);
+        i.putExtra("uri", pk.uri);
         return PendingIntent.getActivity(c, req, i,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
@@ -51,9 +94,12 @@ public class Notifier {
     public static void show(Context c, Task t, boolean fin) {
         Quotes.Q q = Quotes.next(c);
         long seed = System.nanoTime();
-        Bitmap big = Wallpaper.make(q.cat, 1080, 540, q.text, seed);
-        Bitmap small = Wallpaper.make(q.cat, 192, 192, null, seed);
+        Pick pk = pick(c, new Random(seed));
+        Bitmap bg = bg(c, q, seed, pk, 1080, 540);
+        Bitmap big = Wallpaper.compose(bg, q.text, q.author, 1080, 540);
+        Bitmap small = Wallpaper.compose(bg, null, null, 192, 192);
         String title = fin ? "Süre doldu: " + t.title : t.title;
+        PendingIntent pi = openIntent(c, t.id.hashCode(), q, seed, pk);
 
         Notification.Builder b = new Notification.Builder(c, channel(c, t.sound, t.vib))
                 .setSmallIcon(R.drawable.ic_notif)
@@ -61,10 +107,11 @@ public class Notifier {
                 .setContentText(q.text)
                 .setLargeIcon(small)
                 .setStyle(new Notification.BigPictureStyle().bigPicture(big).bigLargeIcon((Bitmap) null))
-                .setContentIntent(openIntent(c, t.id.hashCode(), q, seed))
+                .setContentIntent(pi)
                 .setAutoCancel(true)
                 .setCategory(Notification.CATEGORY_REMINDER)
                 .setVisibility(Notification.VISIBILITY_PUBLIC);
+        if ("1".equals(Store.get(c, "fullscreen", "0"))) b.setFullScreenIntent(pi, true);
 
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         nm.notify(t.id.hashCode(), b.build());
@@ -82,15 +129,17 @@ public class Notifier {
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         }
-        Bitmap big = Wallpaper.make(q.cat, 1080, 540, q.text, seed);
-        Bitmap small = Wallpaper.make(q.cat, 192, 192, null, seed);
+        Pick pk = pick(c, new Random(seed));
+        Bitmap bg = bg(c, q, seed, pk, 1080, 540);
+        Bitmap big = Wallpaper.compose(bg, q.text, q.author, 1080, 540);
+        Bitmap small = Wallpaper.compose(bg, null, null, 192, 192);
         Notification.Builder b = new Notification.Builder(c, "lock")
                 .setSmallIcon(R.drawable.ic_notif)
                 .setContentTitle("Bugünün sözü")
                 .setContentText(q.text)
                 .setLargeIcon(small)
                 .setStyle(new Notification.BigPictureStyle().bigPicture(big).bigLargeIcon((Bitmap) null))
-                .setContentIntent(openIntent(c, 7777, q, seed))
+                .setContentIntent(openIntent(c, 7777, q, seed, pk))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC);

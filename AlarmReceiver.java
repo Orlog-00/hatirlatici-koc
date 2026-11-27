@@ -23,12 +23,15 @@ public class AlarmReceiver extends BroadcastReceiver {
 
         long now = System.currentTimeMillis();
         boolean fin = now >= t.deadline - 2000;
-        Notifier.show(c, t, fin);
+        // Telefon kapalıyken kaçan alarm, izin verilen saat/gün dışında çalmasın
+        boolean quiet = !fin && t.adjust(now) != now;
+        if (!quiet) Notifier.show(c, t, fin);
 
         if (fin) {
             t.active = false;
         } else {
             while (t.next <= now) t.next += t.everyMs;
+            t.next = t.adjust(t.next);
             if (t.next > t.deadline) t.next = t.deadline;
             Scheduler.schedule(c, t);
         }
