@@ -420,7 +420,7 @@ public class Scenes {
         Paint p = paint();
         p.setColor(0xFF120804);
         Path l = new Path();
-        l.moveTo(0, h * 0.58);
+        l.moveTo(0, h * 0.58f);
         l.lineTo(w * 0.30f, h * 0.58f);
         l.lineTo(w * 0.34f, h * 0.63f);
         l.lineTo(w * 0.27f, h * 0.74f);
