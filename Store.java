@@ -8,7 +8,7 @@ import org.json.JSONArray;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Tüm veriler telefonda kalıcı olarak saklanır (uygulama/telefon kapansa da silinmez). */
+/** Tüm veriler telefonda kalıcı saklanır; ayrıca (seçilirse) yedek dosyasına otomatik yazılır. */
 public class Store {
     static SharedPreferences p(Context c) {
         return c.getApplicationContext().getSharedPreferences("koc", Context.MODE_PRIVATE);
@@ -33,6 +33,12 @@ public class Store {
             return;
         }
         p(c).edit().putString("tasks", a.toString()).commit();
+        try {
+            Notifier.updateTaskCard(c);
+        } catch (Exception e) {
+            // bildirim güncellenemedi
+        }
+        Backup.auto(c);
     }
 
     public static String get(Context c, String k, String d) {
@@ -41,5 +47,20 @@ public class Store {
 
     public static void put(Context c, String k, String v) {
         p(c).edit().putString(k, v).commit();
+        if (!k.equals("deck") && !k.equals("apikey") && !k.equals("backup_uri") && !k.equals("backup_time")) {
+            Backup.auto(c);
+        }
+    }
+
+    public static JSONArray arr(Context c, String k) {
+        try {
+            return new JSONArray(p(c).getString(k, "[]"));
+        } catch (Exception e) {
+            return new JSONArray();
+        }
+    }
+
+    public static void putArr(Context c, String k, JSONArray a) {
+        put(c, k, a.toString());
     }
 }

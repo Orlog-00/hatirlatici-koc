@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- zil gövdesi -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,28C45,28 39,35 39,44L39,56C39,60 36,63 33,66L33,68L75,68L75,66C72,63 69,60 69,56L69,44C69,35 63,28 54,28Z" />
+    <!-- zil dili -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,75m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+    <!-- zil tepesi -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,26m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <!-- altın kıvılcım -->
+    <path
+        android:fillColor="#FFFFD166"
+        android:pathData="M77,24L79,31L86,33L79,35L77,42L75,35L68,33L75,31Z" />
+</vector>

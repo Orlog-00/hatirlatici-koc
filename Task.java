@@ -18,6 +18,19 @@ public class Task {
     public int endHour = 24;
     public int days = 127;
 
+    // duvar kağıdı teması: -1 = ayarlara göre rastgele, 0..N = belirli tema, 100 = kendi dosyalarım
+    public int wp = -1;
+    public boolean completed = false;
+    public long completedAt = 0;
+
+    public static final int ACTIVE = 0, PAUSED = 1, DONE = 2, EXPIRED = 3;
+
+    public int status(long now) {
+        if (completed) return DONE;
+        if (deadline <= now) return EXPIRED;
+        return active ? ACTIVE : PAUSED;
+    }
+
     public JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
         o.put("id", id);
@@ -34,6 +47,9 @@ public class Task {
         o.put("startHour", startHour);
         o.put("endHour", endHour);
         o.put("days", days);
+        o.put("wp", wp);
+        o.put("completed", completed);
+        o.put("completedAt", completedAt);
         return o;
     }
 
@@ -45,14 +61,17 @@ public class Task {
         t.everyMs = o.optLong("everyMs", 3600000L);
         t.next = o.optLong("next");
         t.created = o.optLong("created");
-        t.sound = o.optInt("sound");
-        t.vib = o.optInt("vib");
+        t.sound = Math.max(0, Math.min(o.optInt("sound"), Sounds.NAMES.length - 1));
+        t.vib = Math.max(0, Math.min(o.optInt("vib"), Sounds.VIB_NAMES.length - 1));
         t.done = o.optInt("done");
         t.active = o.optBoolean("active", true);
         t.area = o.optInt("area", 0);
         t.startHour = o.optInt("startHour", 0);
         t.endHour = o.optInt("endHour", 24);
         t.days = o.optInt("days", 127);
+        t.wp = o.optInt("wp", -1);
+        t.completed = o.optBoolean("completed", false);
+        t.completedAt = o.optLong("completedAt", 0);
         if (t.endHour <= t.startHour) {
             t.startHour = 0;
             t.endHour = 24;
